@@ -7,6 +7,3 @@ rich>=13.7.1
 torch==2.4.0
 torchaudio==2.4.0
 wikipedia-api==0.8.1
-
---no-build-isolation
-flash-attn>=2.6.3 ; platform_system == "Linux" and python_version >= "3.10"
