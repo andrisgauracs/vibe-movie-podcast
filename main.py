@@ -1,13 +1,13 @@
-import os, re, textwrap, subprocess, shlex, sys
-from typing import List, Optional
+import os, re, textwrap, subprocess, shlex
+from typing import List, Optional, Tuple
+import itertools
+from pathlib import Path
+import shutil
+
 import click
 from dotenv import load_dotenv
 from rich import print
 from rich.console import Console
-import shutil
-from pathlib import Path
-import platform
-import itertools
 
 # TMDb
 import tmdbsimple as tmdb
@@ -18,54 +18,10 @@ import wikipediaapi
 # OpenAI
 from openai import OpenAI
 
-
-def _wiki_client():
-    ua = os.getenv("WIKI_USER_AGENT")
-    if not ua:
-        # Provide a polite default. Include a URL or email you control.
-        ua = f"VibeMoviePodcast/0.1 ({platform.system()};)"
-    return wikipediaapi.Wikipedia(language="en", user_agent=ua)
-
-
 console = Console()
 
 
-def to_vibevoice_numbered_script(script_text: str, speakers: List[str]) -> str:
-    """
-    Convert lines like 'Alice: Hi' / 'Frank: Hey' or unlabeled lines
-    into numbered turns: 'Speaker 1: ...' / 'Speaker 2: ...'
-    The numbering order follows the --speakers list.
-    """
-    name_to_num = {speakers[0].lower(): "1", speakers[1].lower(): "2"}
-    out_lines = []
-    turn_cycle = itertools.cycle(["1", "2"])
-
-    for raw in script_text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-
-        # If already in expected format, keep it
-        if line.lower().startswith("speaker 1:") or line.lower().startswith(
-            "speaker 2:"
-        ):
-            out_lines.append(line)
-            continue
-
-        # If it looks like "Name: text"
-        if ":" in line:
-            left, right = line.split(":", 1)
-            key = left.strip().lower()
-            num = name_to_num.get(key)
-            if num:
-                out_lines.append(f"Speaker {num}: {right.strip()}")
-                continue
-
-        # Fallback: alternate speakers
-        num = next(turn_cycle)
-        out_lines.append(f"Speaker {num}: {line}")
-
-    return "\n".join(out_lines)
+# ---------------------- Wikipedia + TMDb ----------------------
 
 
 def resolve_to_imdb_id(title: str, year: Optional[int]) -> tuple[str, str]:
@@ -89,15 +45,20 @@ def resolve_to_imdb_id(title: str, year: Optional[int]) -> tuple[str, str]:
     return imdb_id, tmdb_title
 
 
+def _wiki_client():
+    ua = os.getenv("WIKI_USER_AGENT")
+    if not ua:
+        ua = "VibeMoviePodcast/0.1 (+https://example.com; contact@example.com)"
+    return wikipediaapi.Wikipedia(language="en", user_agent=ua)
+
+
 def _wiki_candidate_titles(title: str, year: Optional[int]) -> List[str]:
-    # Try common film page conventions
     cand = [title]
     if year:
         cand.append(f"{title} ({year} film)")
     cand.append(f"{title} (film)")
-    # Deduplicate while preserving order
-    seen = set()
-    out = []
+    # dedupe
+    seen, out = set(), []
     for c in cand:
         if c not in seen:
             out.append(c)
@@ -122,7 +83,6 @@ def _collect_relevant_sections(page: wikipediaapi.WikipediaPage) -> List[str]:
         "Accolades",
         "Legacy",
     }
-
     texts: List[str] = []
 
     def walk(sec):
@@ -139,7 +99,6 @@ def _collect_relevant_sections(page: wikipediaapi.WikipediaPage) -> List[str]:
 def fetch_trivia_from_wikipedia(
     title: str, year: Optional[int], max_chars: int = 12000
 ) -> List[str]:
-    """Fetch source notes from Wikipedia, then ask OpenAI to convert them into trivia bullets."""
     wiki = _wiki_client()
     page = None
     for cand in _wiki_candidate_titles(title, year):
@@ -152,17 +111,14 @@ def fetch_trivia_from_wikipedia(
 
     chunks = _collect_relevant_sections(page)
     if not chunks:
-        # fallback to the whole page text if no target sections
         chunks = [page.text]
 
-    # Trim content to a reasonable size for the LLM
-    content = "\n\n".join(chunks)
-    content = content[:max_chars]
+    content = "\n\n".join(chunks)[:max_chars]
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     prompt = f"""From the notes below about the film "{title}", extract 12 short, punchy trivia facts.
-Each fact must be self-contained, one sentence, and under 220 characters. Avoid quotes and spoilers. Paraphrase rather than copying.
-Return one bullet per line, with no numbering.
+Each fact must be one sentence under 220 characters. Avoid quotes and spoilers. Paraphrase rather than copying.
+Return one bullet per line, no numbering.
 
 Notes:
 {content}"""
@@ -173,7 +129,6 @@ Notes:
         temperature=0.3,
     )
     raw = resp.choices[0].message.content.strip().splitlines()
-    # Clean up bullets
     bullets = []
     for line in raw:
         t = re.sub(r"^[\-\*\d\.\)\s]+", "", line).strip()
@@ -182,6 +137,8 @@ Notes:
             bullets.append(textwrap.shorten(t, width=320, placeholder="…"))
     return bullets
 
+
+# ---------------------- Script writing ----------------------
 
 SYSTEM_PROMPT = """You are a scriptwriter for a short two-person movie trivia podcast.
 Write a clean, friendly dialogue that alternates speakers on each line.
@@ -221,7 +178,57 @@ def write_dialogue(
     return resp.choices[0].message.content.strip()
 
 
-def run_vibevoice(
+def to_vibevoice_numbered_script(script_text: str, speakers: List[str]) -> str:
+    name_to_num = {speakers[0].lower(): "1", speakers[1].lower(): "2"}
+    out_lines = []
+    turn_cycle = itertools.cycle(["1", "2"])
+    for raw in script_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.lower().startswith("speaker 1:") or line.lower().startswith(
+            "speaker 2:"
+        ):
+            out_lines.append(line)
+            continue
+        if ":" in line:
+            left, right = line.split(":", 1)
+            key = left.strip().lower()
+            num = name_to_num.get(key)
+            if num:
+                out_lines.append(f"Speaker {num}: {right.strip()}")
+                continue
+        num = next(turn_cycle)
+        out_lines.append(f"Speaker {num}: {line}")
+    return "\n".join(out_lines)
+
+
+# ---------------------- Voices and inference ----------------------
+
+
+def list_available_voices(vibevoice_dir: str) -> List[str]:
+    """Return voice basenames like en-Alice_woman, en-Frank_man, ..."""
+    voices_dir = Path(vibevoice_dir) / "demo" / "voices"
+    if not voices_dir.is_dir():
+        return []
+    return sorted([p.stem for p in voices_dir.glob("*.wav")])
+
+
+def voice_to_speaker_label(voice_basename: str) -> str:
+    """
+    Map en-Alice_woman -> Alice
+    zh-Xinran_woman -> Xinran
+    in-Samuel_man -> Samuel
+    """
+    try:
+        _, tail = voice_basename.split("-", 1)
+        name = tail.split("_", 1)[0]
+        return name
+    except Exception:
+        return voice_basename
+
+
+def run_vibevoice_once(
     vibevoice_dir: str,
     model_name: str,
     txt_path: str,
@@ -230,10 +237,7 @@ def run_vibevoice(
 ) -> None:
     speakers_arg = " ".join(speakers)
     outdir = "outputs"
-
-    # Use an absolute path so the file is found even when cwd=vibevoice_dir
     txt_abs = str(Path(txt_path).resolve())
-
     cmd = (
         f"python demo/inference_from_file.py "
         f"--model_path {shlex.quote(model_name)} "
@@ -245,7 +249,6 @@ def run_vibevoice(
     console.print(cmd)
     subprocess.run(cmd, shell=True, check=True, cwd=vibevoice_dir)
 
-    # Grab newest WAV from the output dir and copy to requested name
     outdir_abs = Path(vibevoice_dir) / outdir
     candidates = sorted(outdir_abs.glob("*.wav"))
     if not candidates:
@@ -255,18 +258,110 @@ def run_vibevoice(
     console.print(f"Copied {latest} -> {out_wav}")
 
 
+def run_vibevoice_with_fallback(
+    vibevoice_dir: str,
+    primary_model: str,
+    fallback_model: str,
+    txt_path: str,
+    speakers: List[str],
+    out_wav: str,
+) -> None:
+    try:
+        run_vibevoice_once(vibevoice_dir, primary_model, txt_path, speakers, out_wav)
+        return
+    except subprocess.CalledProcessError as e:
+        console.print("[yellow]Primary model failed. Trying fallback.[/]")
+        run_vibevoice_once(vibevoice_dir, fallback_model, txt_path, speakers, out_wav)
+
+
+# ------------------ Helpers ----------------------
+
+SUPPORTED_MODELS = ["microsoft/VibeVoice-Large", "microsoft/VibeVoice-1.5B"]
+
+
+def _hf_model_cached(model_id: str) -> bool:
+    """Best-effort check for a cached HF model on disk."""
+    cache_root = (
+        Path(os.getenv("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+    )
+    try:
+        org, name = model_id.split("/", 1)
+    except ValueError:
+        return False
+    model_dir = cache_root / f"models--{org}--{name}"
+    return model_dir.exists()
+
+
+def _pick_model_interactively(default_model: str) -> str:
+    """
+    Always prompt for a model when --model is not provided.
+    Annotate choices with [cached] if present locally, otherwise [download].
+    """
+    choices = SUPPORTED_MODELS
+
+    def label(m: str) -> str:
+        return f"{m} [cached]" if _hf_model_cached(m) else f"{m} [download]"
+
+    click.echo("Choose VibeVoice model for this run:")
+    for i, m in enumerate(choices, 1):
+        click.echo(f"{i}. {label(m)}")
+
+    default_idx = choices.index(default_model) + 1 if default_model in choices else 1
+    idx = click.prompt(
+        f"Pick a model [default: {label(choices[default_idx - 1])}]",
+        type=int,
+        default=default_idx,
+    )
+    if idx < 1 or idx > len(choices):
+        raise click.ClickException("Invalid model choice")
+    return choices[idx - 1]
+
+
+def normalize_outfile_name(name: str) -> str:
+    """
+    Accepts a base name or a full name; returns '<basename>.wav'.
+    Strips any audio extension the user typed by habit.
+    """
+    base = os.path.basename(name).strip()
+    # remove common audio extensions if user typed one
+    base = re.sub(r"\.(wav|mp3|flac|m4a|ogg)$", "", base, flags=re.IGNORECASE)
+    # fallback if user left it empty
+    if not base:
+        base = "podcast"
+    return f"{base}.wav"
+
+
+# ---------------------- CLI ----------------------
+
+
 @click.command()
-@click.option("--title", required=True, help="Movie title to use")
-@click.option("--year", type=int, default=None, help="Optional release year")
+@click.option("--title", default=None, help="Movie title")
+@click.option("--year", type=int, default=None, help="Release year")
 @click.option("--max-trivia", type=int, default=10)
 @click.option(
-    "--speakers",
-    default="Alex,Bailey",
-    help="Comma separated names. Example: Alex,Bailey",
+    "--speakers", default=None, help="Comma separated names. Example: Alice,Frank"
 )
-@click.option("--outfile", default="podcast.wav")
-def cli(title: str, year: Optional[int], max_trivia: int, speakers: str, outfile: str):
+@click.option(
+    "--outfile",
+    default=None,
+    help="Output file name without extension. .wav is added automatically.",
+)
+@click.option(
+    "--model",
+    type=click.Choice(SUPPORTED_MODELS),
+    default=None,
+    help="VibeVoice model to use. If omitted and both are cached, you will be prompted.",
+)
+def cli(
+    title: Optional[str],
+    year: Optional[int],
+    max_trivia: int,
+    speakers: Optional[str],
+    outfile: str,
+    model: Optional[str],
+):
     load_dotenv()
+
     # Keys and paths
     tmdb_key = os.getenv("TMDB_API_KEY")
     if not tmdb_key:
@@ -276,16 +371,37 @@ def cli(title: str, year: Optional[int], max_trivia: int, speakers: str, outfile
     if not openai_key:
         raise click.ClickException("Missing OPENAI_API_KEY in env")
 
-    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    # Pick model and fallback
+    env_primary = os.getenv("VIBEVOICE_MODEL", "microsoft/VibeVoice-Large")
+    env_fallback = os.getenv("VIBEVOICE_FALLBACK_MODEL", "microsoft/VibeVoice-1.5B")
+
+    # If user passed --model, that wins. Otherwise prompt every time.
+    primary_model = model or _pick_model_interactively(env_primary)
+
+    # Fallback is the other model
+    if primary_model == "microsoft/VibeVoice-Large":
+        fallback_model = "microsoft/VibeVoice-1.5B"
+    else:
+        fallback_model = "microsoft/VibeVoice-Large"
+
+    console.print(
+        f"Primary model: [bold]{primary_model}[/], Fallback: [bold]{fallback_model}[/]"
+    )
+
     vibevoice_dir = os.getenv("VIBEVOICE_DIR")
-    vibevoice_model = os.getenv("VIBEVOICE_MODEL", "microsoft/VibeVoice-1.5B")
     if not vibevoice_dir or not os.path.isdir(vibevoice_dir):
         raise click.ClickException("Set VIBEVOICE_DIR to your VibeVoice checkout path")
 
-    spk = [s.strip() for s in speakers.split(",") if s.strip()]
-    if len(spk) != 2:
-        raise click.ClickException("Provide exactly two speaker names")
+    # Interactive prompts if not provided
+    if not title:
+        title = click.prompt("Movie title", type=str)
+    if year is None:
+        if click.confirm("Specify release year", default=True):
+            year = click.prompt("Year", type=int)
+        else:
+            year = None
 
+    # Resolve ID and fetch bullets
     console.rule("[bold]Resolving title on TMDb")
     imdb_id, resolved_title = resolve_to_imdb_id(title, year)
     console.print(f"IMDb ID: [bold]{imdb_id}[/] for [bold]{resolved_title}[/]")
@@ -294,12 +410,53 @@ def cli(title: str, year: Optional[int], max_trivia: int, speakers: str, outfile
     bullets = fetch_trivia_from_wikipedia(resolved_title, year)
     if not bullets:
         raise click.ClickException("Could not extract trivia bullets from Wikipedia")
-    # Respect --max-trivia
     trivia = bullets[:max_trivia]
     for idx, t in enumerate(trivia, 1):
         console.print(f"[cyan]Trivia {idx}[/]: {t}")
 
+    # Speakers selection
+    if speakers:
+        spk = [s.strip() for s in speakers.split(",") if s.strip()]
+        if len(spk) != 2:
+            raise click.ClickException("Provide exactly two speaker names")
+    else:
+        # List voices from repo
+        available = list_available_voices(vibevoice_dir)
+        if not available:
+            console.print(
+                "[yellow]No voice files found. Falling back to Alice, Frank.[/]"
+            )
+            spk = ["Alice", "Frank"]
+        else:
+            console.rule("[bold]Choose two voices")
+            for i, v in enumerate(available, 1):
+                print(f"{i:2d}. {v}")
+            i1 = click.prompt("Pick voice 1 (number)", type=int)
+            i2 = click.prompt("Pick voice 2 (number, different from 1)", type=int)
+            if (
+                i1 < 1
+                or i1 > len(available)
+                or i2 < 1
+                or i2 > len(available)
+                or i1 == i2
+            ):
+                raise click.ClickException("Invalid voice choices")
+            v1, v2 = available[i1 - 1], available[i2 - 1]
+            # Convert to speaker labels expected by demo script
+            spk = [voice_to_speaker_label(v1), voice_to_speaker_label(v2)]
+            console.print(f"Speaker mapping: {spk[0]} <- {v1}, {spk[1]} <- {v2}")
+
+    if not outfile:
+        base = click.prompt("Output file name (no extension)", default="podcast")
+        outfile = normalize_outfile_name(base)
+    else:
+        outfile = normalize_outfile_name(outfile)
+
+    console.print(f"Output will be written to [bold]{outfile}[/]")
+
+    # Write script
     console.rule("[bold]Writing dialogue with OpenAI")
+    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     script = write_dialogue(openai_model, resolved_title, spk, trivia)
     script = to_vibevoice_numbered_script(script, spk)
     txt_path = "podcast.txt"
@@ -307,8 +464,11 @@ def cli(title: str, year: Optional[int], max_trivia: int, speakers: str, outfile
         f.write(script)
     console.print(f"Saved script to {txt_path}")
 
+    # Synthesize with model fallback
     console.rule("[bold]Synthesizing with VibeVoice")
-    run_vibevoice(vibevoice_dir, vibevoice_model, txt_path, spk, outfile)
+    run_vibevoice_with_fallback(
+        vibevoice_dir, primary_model, fallback_model, txt_path, spk, outfile
+    )
     console.print(f"[green]Done.[/] Wrote {outfile}")
 
 
