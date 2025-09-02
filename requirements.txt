@@ -1,0 +1,8 @@
+openai>=1.40.0
+tmdbsimple>=2.9.1
+cinemagoer>=2023.5.1
+python-dotenv>=1.0.1
+click>=8.1.7
+rich>=13.7.1
+torch==2.4.0
+torchaudio==2.4.0
