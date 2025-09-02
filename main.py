@@ -188,10 +188,12 @@ Write a clean, friendly dialogue that alternates speakers on each line.
 Follow these rules:
 - Speakers must be exactly the two names provided.
 - One to two sentence intro for the podcast introducing topics they will be discussing, then a sequence of trivia beats, then a one line outro.
+- For intro use words like "Welcome to...", and for outro use words like "Thanks for listening..."
 - Each trivia beat is 1 to 2 sentences from the lead speaker, then a 1 sentence reaction from the other.
 - Keep lines under 220 characters.
 - Avoid profanity and complicated punctuation.
 - For one of the trivia beats, let one speaker ask the other speaker to sing about it.
+- For one of the trivia beats, make sure the speakers get into an emotional heated argument.
 Return only the dialogue lines, one per line in the format:
 Speaker: text"""
 
