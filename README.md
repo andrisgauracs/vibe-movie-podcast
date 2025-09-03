@@ -9,6 +9,8 @@ A Python-based tool that automatically generates engaging movie trivia podcasts 
 - 🤖 **AI Script Generation**: Creates natural, engaging dialogue between two podcast hosts
 - 🎤 **Voice Synthesis**: Generates high-quality audio using VibeVoice TTS models
 - 🎯 **Interactive CLI**: User-friendly command-line interface with prompts and choices
+- 🌐 **Web Playback**: Built-in web server with HTML player for easy podcast playback
+- 📁 **File Organization**: Automatically organizes generated files in a dedicated directory
 
 ## Prerequisites
 
@@ -97,6 +99,7 @@ You'll be prompted to:
 - `--speakers`: Comma-separated speaker names (e.g., "Alice,Frank")
 - `--outfile`: Output filename without extension
 - `--model`: VibeVoice model to use
+- `--no-server`: Skip starting the web server after generation
 
 ## Configuration
 
@@ -118,8 +121,52 @@ You'll be prompted to:
 
 The tool generates:
 
-- `podcast.txt`: The generated script
-- `{outfile}.wav`: The synthesized audio podcast
+- `podcast_files/podcast.txt`: The generated script
+- `podcast_files/{outfile}.wav`: The synthesized audio podcast
+- `podcast_files/index.html`: Web player for easy playback
+
+After generation, a web server automatically starts at `http://localhost:22034` (or your configured port) with a beautiful HTML player.
+
+### File Organization
+
+All generated files are automatically organized in the `podcast_files/` directory:
+
+```
+podcast_files/
+├── index.html      # Web player
+├── podcast.txt     # Script
+└── podcast.wav     # Audio file
+```
+
+### Web Server
+
+The built-in web server provides:
+
+- 🎵 HTML5 audio player with controls
+- 📄 Script viewer
+- ⬇️ Direct download links
+- 📱 Mobile-friendly interface
+- 🎨 Modern, responsive design
+
+To disable the web server, use the `--no-server` flag.
+
+## RunPod Deployment
+
+When running on RunPod, the web server will be accessible on the exposed TCP port `22034`. You can access it at:
+
+```
+http://YOUR_RUNPOD_IP:22034
+```
+
+### Port Configuration
+
+The web server uses port `22034` by default, which matches RunPod's exposed TCP port. If you need to use a different port, you can modify the `start_web_server` function in `main.py`.
+
+### Accessing from External Networks
+
+- **Direct Access**: `http://YOUR_RUNPOD_IP:22034`
+- **SSH Tunnel**: `ssh -L 8080:localhost:22034 root@YOUR_RUNPOD_IP -p 22`
+- **Web Terminal**: Access through RunPod's web interface
 
 ## Examples
 

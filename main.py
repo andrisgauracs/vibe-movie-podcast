@@ -1,8 +1,12 @@
 import os, re, textwrap, subprocess, shlex
-from typing import List, Optional, Tuple
+from typing import List, Optional
 import itertools
 from pathlib import Path
 import shutil
+import threading
+import time
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import socketserver
 
 import click
 from dotenv import load_dotenv
@@ -331,7 +335,51 @@ def normalize_outfile_name(name: str) -> str:
     return f"{base}.wav"
 
 
-# ---------------------- CLI ----------------------
+# ---------------------- Web Server ----------------------
+
+
+class PodcastHTTPRequestHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "X-Requested-With")
+        super().end_headers()
+
+    def log_message(self, format, *args):
+        # Suppress default logging to keep output clean
+        pass
+
+
+def start_web_server(directory: str, port: int = 22034):
+    """Start a simple web server to serve podcast files"""
+    os.chdir(directory)
+
+    class QuietHTTPRequestHandler(PodcastHTTPRequestHandler):
+        pass
+
+    try:
+        with socketserver.TCPServer(("", port), QuietHTTPRequestHandler) as httpd:
+            console.print(f"[green]Web server started at http://localhost:{port}[/]")
+            console.print(f"[green]Serving files from: {directory}[/]")
+            console.print(f"[green]Press Ctrl+C to stop the server[/]")
+            console.print(f"[cyan]Note: On RunPod, access via http://YOUR_IP:{port}[/]")
+
+            # Open browser if possible
+            try:
+                import webbrowser
+
+                webbrowser.open(f"http://localhost:{port}")
+            except:
+                pass
+
+            httpd.serve_forever()
+    except KeyboardInterrupt:
+        console.print("[yellow]Web server stopped[/]")
+    except OSError as e:
+        console.print(f"[red]Could not start web server: {e}[/]")
+        console.print(
+            "[yellow]You can still access files directly from the podcast_files directory[/]"
+        )
 
 
 @click.command()
@@ -347,10 +395,10 @@ def normalize_outfile_name(name: str) -> str:
     help="Output file name without extension. .wav is added automatically.",
 )
 @click.option(
-    "--model",
-    type=click.Choice(SUPPORTED_MODELS),
-    default=None,
-    help="VibeVoice model to use. If omitted and both are cached, you will be prompted.",
+    "--no-server",
+    is_flag=True,
+    default=False,
+    help="Skip starting the web server after generation",
 )
 def cli(
     title: Optional[str],
@@ -359,6 +407,7 @@ def cli(
     speakers: Optional[str],
     outfile: str,
     model: Optional[str],
+    no_server: bool,
 ):
     load_dotenv()
 
@@ -471,6 +520,139 @@ def cli(
     )
     console.print(f"[green]Done.[/] Wrote {outfile}")
 
+    # Create podcast_files directory and move files
+    console.rule("[bold]Organizing files")
+    podcast_dir = Path("podcast_files")
+    podcast_dir.mkdir(exist_ok=True)
 
-if __name__ == "__main__":
-    cli()
+    # Move generated files to podcast_files directory
+    script_dest = podcast_dir / "podcast.txt"
+    audio_dest = podcast_dir / outfile
+
+    shutil.move(txt_path, script_dest)
+    shutil.move(outfile, audio_dest)
+
+    # Create a simple HTML player
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Podcast: {resolved_title}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }}
+        .container {{
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+        }}
+        h1 {{
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }}
+        .player {{
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }}
+        audio {{
+            width: 100%;
+            margin: 10px 0;
+        }}
+        .files {{
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }}
+        a {{
+            color: #ffd700;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+        .info {{
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 {resolved_title}</h1>
+
+        <div class="info">
+            <strong>Speakers:</strong> {', '.join(spk)}<br>
+            <strong>Trivia Facts:</strong> {len(trivia)}<br>
+            <strong>Generated:</strong> {time.strftime('%Y-%m-%d %H:%M:%S')}
+        </div>
+
+        <div class="player">
+            <h2>🎧 Listen to the Podcast</h2>
+            <audio controls preload="metadata">
+                <source src="{outfile}" type="audio/wav">
+                Your browser does not support the audio element.
+            </audio>
+        </div>
+
+        <div class="files">
+            <h3>📁 Files</h3>
+            <p><a href="podcast.txt" target="_blank">📄 View Script (podcast.txt)</a></p>
+            <p><a href="{outfile}" download>⬇️ Download Audio ({outfile})</a></p>
+        </div>
+    </div>
+</body>
+</html>"""
+
+    html_file = podcast_dir / "index.html"
+    with open(html_file, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    console.print(f"[green]Files moved to {podcast_dir}/[/]")
+    console.print(f"[green]Script: {script_dest}[/]")
+    console.print(f"[green]Audio: {audio_dest}[/]")
+    console.print(f"[green]Player: {html_file}[/]")
+
+    # Start web server (unless disabled)
+    if not no_server:
+        console.rule("[bold]Starting web server")
+        console.print("[cyan]Starting web server for podcast playback...[/]")
+
+        # Start server in a separate thread so it doesn't block
+        server_thread = threading.Thread(
+            target=start_web_server, args=(str(podcast_dir), 22034), daemon=True
+        )
+        server_thread.start()
+
+        # Give server time to start
+        time.sleep(1)
+
+        console.print(f"[green]🎧 Podcast ready! Visit: http://localhost:22034[/]")
+        console.print(f"[green]📁 Files available at: {podcast_dir}/[/]")
+
+        # Keep the main thread alive
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            console.print("[yellow]Shutting down...[/]")
+    else:
+        console.print(
+            f"[green]🎧 Podcast generated! Files available at: {podcast_dir}/[/]"
+        )
+        console.print(f"[green]📁 Script: {script_dest}[/]")
+        console.print(f"[green]📁 Audio: {audio_dest}[/]")
