@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 import threading
 import time
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler
 import socketserver
 
 import click
@@ -52,7 +52,7 @@ def resolve_to_imdb_id(title: str, year: Optional[int]) -> tuple[str, str]:
 def _wiki_client():
     ua = os.getenv("WIKI_USER_AGENT")
     if not ua:
-        ua = "VibeMoviePodcast/0.1 (+https://example.com; contact@example.com)"
+        ua = "VibeMoviePodcast/0.1"
     return wikipediaapi.Wikipedia(language="en", user_agent=ua)
 
 
@@ -350,9 +350,15 @@ class PodcastHTTPRequestHandler(SimpleHTTPRequestHandler):
         pass
 
 
-def start_web_server(directory: str, port: int = 22034):
+def start_web_server(directory: str, port: int = 3001):
     """Start a simple web server to serve podcast files"""
-    os.chdir(directory)
+
+    console.print(f"[cyan]Attempting to serve directory: {directory}")
+    try:
+        os.chdir(directory)
+    except Exception as e:
+        console.print(f"[red]Failed to change directory: {e}")
+        return
 
     class QuietHTTPRequestHandler(PodcastHTTPRequestHandler):
         pass
@@ -362,17 +368,12 @@ def start_web_server(directory: str, port: int = 22034):
             console.print(f"[green]Web server started at http://localhost:{port}[/]")
             console.print(f"[green]Serving files from: {directory}[/]")
             console.print(f"[green]Press Ctrl+C to stop the server[/]")
-            console.print(f"[cyan]Note: On RunPod, access via http://YOUR_IP:{port}[/]")
-
-            # Open browser if possible
-            try:
-                import webbrowser
-
-                webbrowser.open(f"http://localhost:{port}")
-            except:
-                pass
-
             httpd.serve_forever()
+    except Exception as e:
+        console.print(f"[red]Could not start web server: {e}")
+        console.print(
+            "[yellow]You can still access files directly from the podcast_files directory[/]"
+        )
     except KeyboardInterrupt:
         console.print("[yellow]Web server stopped[/]")
     except OSError as e:
@@ -395,10 +396,22 @@ def start_web_server(directory: str, port: int = 22034):
     help="Output file name without extension. .wav is added automatically.",
 )
 @click.option(
+    "--model",
+    type=click.Choice(SUPPORTED_MODELS),
+    default=None,
+    help="VibeVoice model to use. If omitted and both are cached, you will be prompted.",
+)
+@click.option(
     "--no-server",
     is_flag=True,
     default=False,
     help="Skip starting the web server after generation",
+)
+@click.option(
+    "--serve-only",
+    is_flag=True,
+    default=False,
+    help="Skip podcast generation and just serve existing files",
 )
 def cli(
     title: Optional[str],
@@ -408,7 +421,41 @@ def cli(
     outfile: str,
     model: Optional[str],
     no_server: bool,
+    serve_only: bool,
 ):
+    # Handle serve-only mode
+    if serve_only:
+        podcast_dir = Path("podcast_files")
+        if not podcast_dir.exists():
+            console.print("[red]❌ No existing podcast files found![/]")
+            console.print(
+                "[yellow]Run without --serve-only to generate a podcast first.[/]"
+            )
+            return
+
+        console.print("[green]📁 Found existing podcast files[/]")
+        console.print("[cyan]Starting web server...[/]")
+
+        # Start server in a separate thread
+        server_thread = threading.Thread(
+            target=start_web_server, args=(str(podcast_dir), 3001), daemon=True
+        )
+        server_thread.start()
+
+        # Give server time to start
+        time.sleep(1)
+
+        console.print(f"[green]🎧 Web server ready! Visit: http://localhost:3001[/]")
+        console.print(f"[green]📁 Serving files from: {podcast_dir}/[/]")
+
+        # Keep the main thread alive
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            console.print("[yellow]Web server stopped[/]")
+        return
+
     load_dotenv()
 
     # Keys and paths
@@ -634,14 +681,14 @@ def cli(
 
         # Start server in a separate thread so it doesn't block
         server_thread = threading.Thread(
-            target=start_web_server, args=(str(podcast_dir), 22034), daemon=True
+            target=start_web_server, args=(str(podcast_dir), 3001), daemon=True
         )
         server_thread.start()
 
         # Give server time to start
         time.sleep(1)
 
-        console.print(f"[green]🎧 Podcast ready! Visit: http://localhost:22034[/]")
+        console.print(f"[green]🎧 Podcast ready! Visit: http://localhost:3001[/]")
         console.print(f"[green]📁 Files available at: {podcast_dir}/[/]")
 
         # Keep the main thread alive
@@ -656,3 +703,7 @@ def cli(
         )
         console.print(f"[green]📁 Script: {script_dest}[/]")
         console.print(f"[green]📁 Audio: {audio_dest}[/]")
+
+
+if __name__ == "__main__":
+    cli()

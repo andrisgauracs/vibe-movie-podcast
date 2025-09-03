@@ -1,5 +1,7 @@
 # Vibe Movie Podcast Generator
 
+---
+
 A Python-based tool that automatically generates engaging movie trivia podcasts using AI. It fetches movie data from TMDb, extracts trivia from Wikipedia, generates a conversational script with OpenAI, and synthesizes audio using Microsoft's VibeVoice.
 
 ## Features
@@ -16,8 +18,8 @@ A Python-based tool that automatically generates engaging movie trivia podcasts 
 
 - Python 3.8+
 - API keys for:
-  - OpenAI (for script generation)
-  - TMDb (for movie data)
+- OpenAI (for script generation)
+- TMDb (for movie data)
 - Git (for cloning VibeVoice)
 - FFmpeg (for audio processing)
 
@@ -30,7 +32,14 @@ A Python-based tool that automatically generates engaging movie trivia podcasts 
    cd vibe-movie-podcast
    ```
 
-2. **Run the installation script:**
+2. Before running the installation script, create and activate a Python virtual environment:
+
+   ```bash
+   uv venv
+   source .venv/bin/activate
+   ```
+
+3. **Run the installation script:**
 
    ```bash
    ./install.sh
@@ -44,7 +53,7 @@ A Python-based tool that automatically generates engaging movie trivia podcasts 
    - Clone and install VibeVoice
    - Configure environment variables
 
-3. **Set up environment variables:**
+4. **Set up environment variables:**
 
    ```bash
    cp .env.sample .env
@@ -100,6 +109,7 @@ You'll be prompted to:
 - `--outfile`: Output filename without extension
 - `--model`: VibeVoice model to use
 - `--no-server`: Skip starting the web server after generation
+- `--serve-only`: Skip podcast generation and just serve existing files
 
 ## Configuration
 
@@ -125,7 +135,7 @@ The tool generates:
 - `podcast_files/{outfile}.wav`: The synthesized audio podcast
 - `podcast_files/index.html`: Web player for easy playback
 
-After generation, a web server automatically starts at `http://localhost:22034` (or your configured port) with a beautiful HTML player.
+After generation, a web server automatically starts at `http://localhost:3001` (or your configured port) with a beautiful HTML player.
 
 ### File Organization
 
@@ -150,23 +160,19 @@ The built-in web server provides:
 
 To disable the web server, use the `--no-server` flag.
 
-## RunPod Deployment
+## Serving Existing Podcasts
 
-When running on RunPod, the web server will be accessible on the exposed TCP port `22034`. You can access it at:
+If you already have generated podcast files, you can start the web server without regenerating:
 
+```bash
+python main.py --serve-only
 ```
-http://YOUR_RUNPOD_IP:22034
-```
 
-### Port Configuration
+This will:
 
-The web server uses port `22034` by default, which matches RunPod's exposed TCP port. If you need to use a different port, you can modify the `start_web_server` function in `main.py`.
-
-### Accessing from External Networks
-
-- **Direct Access**: `http://YOUR_RUNPOD_IP:22034`
-- **SSH Tunnel**: `ssh -L 8080:localhost:22034 root@YOUR_RUNPOD_IP -p 22`
-- **Web Terminal**: Access through RunPod's web interface
+- Check for existing `podcast_files/` directory
+- Start the web server on port 3001
+- Serve your previously generated podcast
 
 ## Examples
 
@@ -222,4 +228,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [Microsoft VibeVoice](https://github.com/microsoft/VibeVoice) for voice synthesis
 - [OpenAI](https://openai.com) for script generation
 - [TMDb](https://themoviedb.org) for movie data
-- [Wikipedia](https://wikipedia.org) for trivia content</content>
+- [Wikipedia](https://wikipedia.org) for trivia content
