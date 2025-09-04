@@ -60,7 +60,5 @@ else
   echo "flash-attn installed successfully."
 fi
 
-uv pip install "numpy<=2.2" --force-reinstall
-
 echo "Install complete."
 '
