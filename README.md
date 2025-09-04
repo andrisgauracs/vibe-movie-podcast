@@ -4,6 +4,9 @@
 
 A Python-based tool that automatically generates engaging movie trivia podcasts using AI. It fetches movie data from TMDb, extracts trivia from Wikipedia, generates a conversational script with OpenAI, and synthesizes audio using Microsoft's VibeVoice.
 
+> **This project is part of the VibeVoice Deepdive Video:**
+> [https://youtu.be/uCOu4HZpPdQ](https://youtu.be/uCOu4HZpPdQ)
+
 ## Features
 
 - 🎬 **Movie Research**: Automatically resolves movie titles to IMDb IDs using TMDb
