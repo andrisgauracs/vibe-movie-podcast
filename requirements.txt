@@ -7,3 +7,17 @@ rich>=13.7.1
 torch==2.4.0
 torchaudio==2.4.0
 wikipedia-api==0.8.1
+accelerate==1.6.0
+transformers==4.51.3
+llvmlite>=0.40.0
+numba>=0.57.0
+diffusers
+tqdm
+numpy<=2.2
+scipy
+librosa
+ml-collections
+absl-py
+gradio
+av
+aiortc

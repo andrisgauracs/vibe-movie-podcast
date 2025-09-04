@@ -1,80 +1,51 @@
 bash -lc '
 set -euo pipefail
 
-echo "[1/8] apt packages"
+echo "[1/7] apt packages"
 sudo apt-get update -y
 sudo apt-get install -y ffmpeg git build-essential ninja-build
 
-echo "[2/8] install uv if missing"
+echo "[2/7] install uv if missing"
 if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
   . ~/.bashrc || true
 fi
 
-echo "[3/8] install project deps"
+echo "[3/7] install project deps"
 uv pip install -r requirements.txt
+uv pip install huggingface_hub
 
-echo "[4/8] clone VibeVoice if needed"
-if [ ! -d VibeVoice ]; then
-  git clone https://github.com/microsoft/VibeVoice.git
-fi
+echo "[4/7] Hugging Face authentication"
+echo "Please login to Hugging Face to access the VibeVoice-1.5B model."
+hf auth login
 
-echo "[5/8] install VibeVoice editable"
-uv pip install -e ./VibeVoice
+echo "[5/7] download VibeVoice-1.5B model from Hugging Face"
+mkdir -p vibevoice_model
+cd vibevoice_model
+hf download microsoft/VibeVoice-1.5B --local-dir .
+cd ..
 
-echo "[6/8] choose default VibeVoice model"
-read -r -p "Use VibeVoice model: [L]arge, [S]mall-1.5B, [B]oth? [L/s/b]: " CHOICE
-CHOICE=${CHOICE:-L}
-case "$CHOICE" in
-  L|l)
-    VVMODEL="microsoft/VibeVoice-Large"
-    VVFALLBACK="microsoft/VibeVoice-1.5B"
-    ;;
-  S|s)
-    VVMODEL="microsoft/VibeVoice-1.5B"
-    VVFALLBACK="microsoft/VibeVoice-Large"
-    ;;
-  B|b)
-    VVMODEL="microsoft/VibeVoice-Large"
-    VVFALLBACK="microsoft/VibeVoice-1.5B"
-    ;;
-  *)
-    VVMODEL="microsoft/VibeVoice-Large"
-    VVFALLBACK="microsoft/VibeVoice-1.5B"
-    ;;
-esac
-
-# Persist env for new shells
+# Set environment variable for model directory
 if ! grep -q "VIBEVOICE_DIR=" ~/.bashrc 2>/dev/null; then
-  echo "export VIBEVOICE_DIR=\$PWD/VibeVoice" >> ~/.bashrc
+  echo "export VIBEVOICE_DIR=\$PWD/vibevoice_model" >> ~/.bashrc
 fi
 if ! grep -q "VIBEVOICE_MODEL=" ~/.bashrc 2>/dev/null; then
-  echo "export VIBEVOICE_MODEL=$VVMODEL" >> ~/.bashrc
+  echo "export VIBEVOICE_MODEL=microsoft/VibeVoice-1.5B" >> ~/.bashrc
 else
-  sed -i "s#^export VIBEVOICE_MODEL=.*#export VIBEVOICE_MODEL=$VVMODEL#" ~/.bashrc
-fi
-if ! grep -q "VIBEVOICE_FALLBACK_MODEL=" ~/.bashrc 2>/dev/null; then
-  echo "export VIBEVOICE_FALLBACK_MODEL=$VVFALLBACK" >> ~/.bashrc
-else
-  sed -i "s#^export VIBEVOICE_FALLBACK_MODEL=.*#export VIBEVOICE_FALLBACK_MODEL=$VVFALLBACK#" ~/.bashrc
+  sed -i "s#^export VIBEVOICE_MODEL=.*#export VIBEVOICE_MODEL=microsoft/VibeVoice-1.5B#" ~/.bashrc
 fi
 
-export VIBEVOICE_DIR="$PWD/VibeVoice"
-export VIBEVOICE_MODEL="$VVMODEL"
-export VIBEVOICE_FALLBACK_MODEL="$VVFALLBACK"
+export VIBEVOICE_DIR="$PWD/vibevoice_model"
+export VIBEVOICE_MODEL="microsoft/VibeVoice-1.5B"
 
-echo "[7/8] report torch and CUDA"
+echo "[6/7] report torch and CUDA"
 uv run python - <<PY
 import torch
-print("torch:", torch.__version__)
-print("cuda:", torch.version.cuda)
-print("device count:", torch.cuda.device_count())
-if torch.cuda.is_available():
-    print("device 0:", torch.cuda.get_device_name(0))
+print("device 0:", torch.cuda.get_device_name(0))
 PY
 
-echo "[8/8] try FlashAttention 2 wheel, then source"
-uv pip install -U pip setuptools wheel packaging cmake ninja pybind11
+echo "[7/7] try FlashAttention 2 wheel, then source"
+uv pip install -U pip setuptools wheel packaging cmake ninja pybind11 psutil
 set +e
 uv pip install "flash-attn==2.6.3" || uv pip install --no-build-isolation "flash-attn==2.6.3"
 FA_STATUS=$?
@@ -88,6 +59,8 @@ if [ $FA_STATUS -ne 0 ]; then
 else
   echo "flash-attn installed successfully."
 fi
+
+uv pip install "numpy<=2.2" --force-reinstall
 
 echo "Install complete."
 '

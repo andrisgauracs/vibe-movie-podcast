@@ -121,8 +121,8 @@ def fetch_trivia_from_wikipedia(
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     prompt = f"""From the notes below about the film "{title}", extract 12 short, punchy trivia facts.
-Each fact must be one sentence under 220 characters. Avoid quotes and spoilers. Paraphrase rather than copying.
-Return one bullet per line, no numbering.
+Each fact must be one to two sentences long, under 220 characters. Avoid quotes and spoilers. Paraphrase rather than copying.
+Return one bullet point per line, no numbering.
 
 Notes:
 {content}"""
@@ -251,7 +251,12 @@ def run_vibevoice_once(
     )
     console.rule("[bold]VibeVoice generation")
     console.print(cmd)
-    subprocess.run(cmd, shell=True, check=True, cwd=vibevoice_dir)
+    env = os.environ.copy()
+    parent_dir = os.path.dirname(vibevoice_dir)
+    env["PYTHONPATH"] = parent_dir + (
+        ":" + env["PYTHONPATH"] if "PYTHONPATH" in env else ""
+    )
+    subprocess.run(cmd, shell=True, check=True, cwd=vibevoice_dir, env=env)
 
     outdir_abs = Path(vibevoice_dir) / outdir
     candidates = sorted(outdir_abs.glob("*.wav"))
@@ -262,63 +267,10 @@ def run_vibevoice_once(
     console.print(f"Copied {latest} -> {out_wav}")
 
 
-def run_vibevoice_with_fallback(
-    vibevoice_dir: str,
-    primary_model: str,
-    fallback_model: str,
-    txt_path: str,
-    speakers: List[str],
-    out_wav: str,
-) -> None:
-    try:
-        run_vibevoice_once(vibevoice_dir, primary_model, txt_path, speakers, out_wav)
-        return
-    except subprocess.CalledProcessError as e:
-        console.print("[yellow]Primary model failed. Trying fallback.[/]")
-        run_vibevoice_once(vibevoice_dir, fallback_model, txt_path, speakers, out_wav)
-
-
 # ------------------ Helpers ----------------------
 
-SUPPORTED_MODELS = ["microsoft/VibeVoice-Large", "microsoft/VibeVoice-1.5B"]
-
-
-def _hf_model_cached(model_id: str) -> bool:
-    """Best-effort check for a cached HF model on disk."""
-    cache_root = (
-        Path(os.getenv("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
-    )
-    try:
-        org, name = model_id.split("/", 1)
-    except ValueError:
-        return False
-    model_dir = cache_root / f"models--{org}--{name}"
-    return model_dir.exists()
-
-
-def _pick_model_interactively(default_model: str) -> str:
-    """
-    Always prompt for a model when --model is not provided.
-    Annotate choices with [cached] if present locally, otherwise [download].
-    """
-    choices = SUPPORTED_MODELS
-
-    def label(m: str) -> str:
-        return f"{m} [cached]" if _hf_model_cached(m) else f"{m} [download]"
-
-    click.echo("Choose VibeVoice model for this run:")
-    for i, m in enumerate(choices, 1):
-        click.echo(f"{i}. {label(m)}")
-
-    default_idx = choices.index(default_model) + 1 if default_model in choices else 1
-    idx = click.prompt(
-        f"Pick a model [default: {label(choices[default_idx - 1])}]",
-        type=int,
-        default=default_idx,
-    )
-    if idx < 1 or idx > len(choices):
-        raise click.ClickException("Invalid model choice")
-    return choices[idx - 1]
+# Only support the 1.5B model now
+SUPPORTED_MODELS = ["microsoft/VibeVoice-1.5B"]
 
 
 def normalize_outfile_name(name: str) -> str:
@@ -396,12 +348,6 @@ def start_web_server(directory: str, port: int = 3001):
     help="Output file name without extension. .wav is added automatically.",
 )
 @click.option(
-    "--model",
-    type=click.Choice(SUPPORTED_MODELS),
-    default=None,
-    help="VibeVoice model to use. If omitted and both are cached, you will be prompted.",
-)
-@click.option(
     "--no-server",
     is_flag=True,
     default=False,
@@ -419,7 +365,6 @@ def cli(
     max_trivia: int,
     speakers: Optional[str],
     outfile: str,
-    model: Optional[str],
     no_server: bool,
     serve_only: bool,
 ):
@@ -468,21 +413,14 @@ def cli(
         raise click.ClickException("Missing OPENAI_API_KEY in env")
 
     # Pick model and fallback
-    env_primary = os.getenv("VIBEVOICE_MODEL", "microsoft/VibeVoice-Large")
-    env_fallback = os.getenv("VIBEVOICE_FALLBACK_MODEL", "microsoft/VibeVoice-1.5B")
+    # env_primary = os.getenv("VIBEVOICE_MODEL", "microsoft/VibeVoice-Large")
+    # env_fallback = os.getenv("VIBEVOICE_FALLBACK_MODEL", "microsoft/VibeVoice-1.5B")
 
-    # If user passed --model, that wins. Otherwise prompt every time.
-    primary_model = model or _pick_model_interactively(env_primary)
+    # Always use 1.5B model
+    primary_model = "microsoft/VibeVoice-1.5B"
+    fallback_model = "microsoft/VibeVoice-1.5B"
 
-    # Fallback is the other model
-    if primary_model == "microsoft/VibeVoice-Large":
-        fallback_model = "microsoft/VibeVoice-1.5B"
-    else:
-        fallback_model = "microsoft/VibeVoice-Large"
-
-    console.print(
-        f"Primary model: [bold]{primary_model}[/], Fallback: [bold]{fallback_model}[/]"
-    )
+    console.print(f"Using VibeVoice model: [bold]{primary_model}[/]")
 
     vibevoice_dir = os.getenv("VIBEVOICE_DIR")
     if not vibevoice_dir or not os.path.isdir(vibevoice_dir):
@@ -562,9 +500,7 @@ def cli(
 
     # Synthesize with model fallback
     console.rule("[bold]Synthesizing with VibeVoice")
-    run_vibevoice_with_fallback(
-        vibevoice_dir, primary_model, fallback_model, txt_path, spk, outfile
-    )
+    run_vibevoice_once(vibevoice_dir, primary_model, txt_path, spk, outfile)
     console.print(f"[green]Done.[/] Wrote {outfile}")
 
     # Create podcast_files directory and move files
@@ -671,6 +607,42 @@ def cli(
 
     console.print(f"[green]Files moved to {podcast_dir}/[/]")
     console.print(f"[green]Script: {script_dest}[/]")
+    console.print(f"[green]Audio: {audio_dest}[/]")
+    console.print(f"[green]Player: {html_file}[/]")
+
+    # Start web server (unless disabled)
+    if not no_server:
+        console.rule("[bold]Starting web server")
+        console.print("[cyan]Starting web server for podcast playback...[/]")
+
+        # Start server in a separate thread so it doesn't block
+        server_thread = threading.Thread(
+            target=start_web_server, args=(str(podcast_dir), 3001), daemon=True
+        )
+        server_thread.start()
+
+        # Give server time to start
+        time.sleep(1)
+
+        console.print(f"[green]🎧 Podcast ready! Visit: http://localhost:3001[/]")
+        console.print(f"[green]📁 Files available at: {podcast_dir}/[/]")
+
+        # Keep the main thread alive
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            console.print("[yellow]Shutting down...[/]")
+    else:
+        console.print(
+            f"[green]🎧 Podcast generated! Files available at: {podcast_dir}/[/]"
+        )
+        console.print(f"[green]📁 Script: {script_dest}[/]")
+        console.print(f"[green]📁 Audio: {audio_dest}[/]")
+
+
+if __name__ == "__main__":
+    cli()
     console.print(f"[green]Audio: {audio_dest}[/]")
     console.print(f"[green]Player: {html_file}[/]")
 
